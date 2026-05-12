@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}概览看板 - 视频趋势监测{% endblock %}
+{% block content %}
+<div id="emptyState" class="empty-state" style="display:none;">
+    <div class="empty-state-icon">+</div>
+    <h2>暂无数据</h2>
+    <p>上传第一期视频数据，开始监测趋势变化</p>
+    <a href="/upload" class="btn btn-primary">上传第一期数据</a>
+</div>
+
+<div id="dashboardContent" style="display:none;">
+    <div class="section-header">
+        <h1>数据概览</h1>
+        <a href="/upload" class="btn btn-primary">上传数据</a>
+    </div>
+
+    <div class="cards" id="summaryCards"></div>
+
+    <div class="chart-container">
+        <h2>各期视频播放量对比</h2>
+        <canvas id="compareChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>累计趋势（播放量 / 涨粉量）</h2>
+        <canvas id="trendChart"></canvas>
+    </div>
+
+    <div class="table-wrap">
+        <h2>视频列表</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>视频主题</th>
+                    <th>发布日期</th>
+                    <th>播放量</th>
+                    <th>点赞</th>
+                    <th>涨粉</th>
+                    <th>完播率</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="videoTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+async function loadDashboard() {
+    try {
+        const res = await fetch('/api/videos');
+        const videos = await res.json();
+        if (!videos || videos.length === 0) {
+            document.getElementById('emptyState').style.display = 'block';
+            return;
+        }
+        document.getElementById('dashboardContent').style.display = 'block';
+
+        const total = videos.length;
+        const avgPlay = Math.round(videos.reduce(function(s, v) { return s + (v['播放量'] || 0); }, 0) / total);
+        const totalFans = videos.reduce(function(s, v) { return s + (v['涨粉量'] || 0); }, 0);
+        var rates = videos.map(function(v) { return parseFloat(v['完播率']) || 0; });
+        var avgRate = rates.length ? (rates.reduce(function(a, b) { return a + b; }, 0) / rates.length).toFixed(2) + '%' : '0%';
+
+        document.getElementById('summaryCards').innerHTML =
+            '<div class="card"><div class="card-label">总视频数</div><div class="card-value">' + total + '</div></div>' +
+            '<div class="card"><div class="card-label">平均播放量</div><div class="card-value">' + avgPlay.toLocaleString() + '</div></div>' +
+            '<div class="card"><div class="card-label">总涨粉</div><div class="card-value">' + totalFans.toLocaleString() + '</div></div>' +
+            '<div class="card"><div class="card-label">平均完播率</div><div class="card-value">' + avgRate + '</div></div>';
+
+        const sorted = videos.slice().sort(function(a, b) { return new Date(a['发布日期']) - new Date(b['发布日期']); });
+        const labels = sorted.map(function(v) { return v['视频主题'] || '#' + v['video_id']; });
+        const plays = sorted.map(function(v) { return v['播放量'] || 0; });
+        const likes = sorted.map(function(v) { return v['点赞量'] || 0; });
+        const favorites = sorted.map(function(v) { return v['收藏量'] || 0; });
+
+        new Chart(document.getElementById('compareChart'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: '播放量', data: plays, backgroundColor: '#2563eb' },
+                    { label: '点赞量', data: likes, backgroundColor: '#059669' },
+                    { label: '收藏量', data: favorites, backgroundColor: '#d97706' }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } }
+                },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        new Chart(document.getElementById('trendChart'), {
+            type: 'line',
+            data: {
+                labels: sorted.map(function(v) { return v['发布日期']; }),
+                datasets: [
+                    { label: '播放量', data: plays, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.06)', fill: true, tension: 0.3 },
+                    { label: '涨粉量', data: sorted.map(function(v) { return v['涨粉量'] || 0; }), borderColor: '#e11d48', backgroundColor: 'rgba(225,29,72,0.06)', fill: true, tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } }
+                },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        const tbody = document.getElementById('videoTableBody');
+        tbody.innerHTML = videos.map(function(v) {
+            return '<tr>' +
+                '<td><a href="/video/' + v['video_id'] + '">' + (v['视频主题'] || '视频 #' + v['video_id']) + '</a></td>' +
+                '<td>' + v['发布日期'] + '</td>' +
+                '<td>' + (v['播放量'] || 0).toLocaleString() + '</td>' +
+                '<td>' + (v['点赞量'] || 0) + '</td>' +
+                '<td>' + (v['涨粉量'] || 0) + '</td>' +
+                '<td>' + (v['完播率'] || '-') + '</td>' +
+                '<td>' +
+                    '<a href="/video/' + v['video_id'] + '" class="btn btn-primary btn-sm">详情</a> ' +
+                    '<button class="btn btn-danger btn-sm delete-btn" data-id="' + v['video_id'] + '">删除</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+    } catch (err) {
+        console.error('Failed to load dashboard:', err);
+    }
+}
+
+async function deleteVideo(id) {
+    try {
+        const res = await fetch('/api/video/' + id + '/delete', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('删除失败: ' + (data.error || ''));
+        }
+    } catch (err) {
+        alert('网络错误，请重试');
+    }
+}
+
+document.getElementById('videoTableBody').addEventListener('click', function(e) {
+    var btn = e.target.closest('.delete-btn');
+    if (!btn) return;
+    var id = parseInt(btn.getAttribute('data-id'));
+    var topic = btn.closest('tr').querySelector('td:first-child a').textContent;
+    showDeleteModal(
+        '确定删除 "<strong>' + topic + '</strong>" 的所有数据？此操作不可恢复。',
+        function() { deleteVideo(id); }
+    );
+});
+
+loadDashboard();
+</script>
+{% endblock %}

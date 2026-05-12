@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}视频详情 - 视频趋势监测{% endblock %}
+{% block content %}
+<div id="loading" style="text-align:center;padding:80px 20px;color:var(--text-tertiary);font-size:14px;">加载中...</div>
+<div id="content" style="display:none;">
+    <a href="/" class="back-link">← 返回概览</a>
+
+    <div class="detail-header">
+        <h1 id="videoTitle"></h1>
+        <div class="meta" id="videoMeta"></div>
+    </div>
+
+    <div class="indicator-grid" id="indicatorGrid"></div>
+
+    <div class="chart-container">
+        <h2>播放量趋势（小时级）</h2>
+        <canvas id="playTrendChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>涨粉量趋势（小时级）</h2>
+        <canvas id="fanTrendChart"></canvas>
+    </div>
+
+    <div class="delete-area">
+        <button class="btn btn-danger" onclick="deleteCurrentVideo()">删除此视频</button>
+    </div>
+</div>
+
+<script>
+var VIDEO_ID = {{ video_id }};
+var VIDEO_TOPIC = '视频 #' + VIDEO_ID;
+
+async function loadDetail() {
+    try {
+        var res = await fetch('/api/video/' + VIDEO_ID);
+        var data = await res.json();
+        if (data.error) {
+            document.getElementById('loading').textContent = '视频不存在';
+            return;
+        }
+
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('content').style.display = 'block';
+
+        var s = data.summary;
+        VIDEO_TOPIC = s['视频主题'] || '视频 #' + s['video_id'];
+        document.getElementById('videoTitle').textContent = VIDEO_TOPIC;
+        document.getElementById('videoMeta').textContent =
+            '发布日期: ' + s['发布日期'] + '  |  OGC_FID: ' + s['OGC_FID'] + (s['上传时间'] ? '  |  上传时间: ' + s['上传时间'] : '');
+
+        var indicators = [
+            ['播放量', s['播放量']], ['点赞量', s['点赞量']], ['评论量', s['评论量']], ['分享量', s['分享量']],
+            ['收藏量', s['收藏量']], ['弹幕量', s['弹幕量']], ['完播率', s['完播率'] || '-'], ['2s跳出率', s['2s跳出率'] || '-'],
+            ['涨粉量', s['涨粉量']], ['脱粉量', s['脱粉量']], ['粉丝播放占比', s['粉丝播放占比'] || '-']
+        ];
+        document.getElementById('indicatorGrid').innerHTML = indicators.map(function(item) {
+            var label = item[0], val = item[1];
+            return '<div class="indicator-card">' +
+                '<div class="indicator-label">' + label + '</div>' +
+                '<div class="indicator-value">' + (typeof val === 'number' ? val.toLocaleString() : val) + '</div>' +
+            '</div>';
+        }).join('');
+
+        if (data.play_trend && data.play_trend.length) {
+            var playLabels = data.play_trend.map(function(r) { return r['日期']; });
+            new Chart(document.getElementById('playTrendChart'), {
+                type: 'line',
+                data: {
+                    labels: playLabels,
+                    datasets: [
+                        { label: '抖音', data: data.play_trend.map(function(r) { return r['抖音'] || 0; }), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.06)', fill: true, tension: 0.3 },
+                        { label: '抖音精选', data: data.play_trend.map(function(r) { return r['抖音精选'] || 0; }), borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.06)', fill: true, tension: 0.3 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } }
+                    },
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        } else {
+            document.querySelectorAll('.chart-container')[0].innerHTML = '<p style="color:var(--text-tertiary);padding:40px 20px;text-align:center;font-size:14px;">暂无播放量趋势数据</p>';
+        }
+
+        if (data.fan_trend && data.fan_trend.length) {
+            var fanLabels = data.fan_trend.map(function(r) { return r['日期']; });
+            new Chart(document.getElementById('fanTrendChart'), {
+                type: 'line',
+                data: {
+                    labels: fanLabels,
+                    datasets: [
+                        { label: '抖音', data: data.fan_trend.map(function(r) { return r['抖音'] || 0; }), borderColor: '#e11d48', backgroundColor: 'rgba(225,29,72,0.06)', fill: true, tension: 0.3 },
+                        { label: '抖音精选', data: data.fan_trend.map(function(r) { return r['抖音精选'] || 0; }), borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.06)', fill: true, tension: 0.3 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } }
+                    },
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        } else {
+            var charts = document.querySelectorAll('.chart-container');
+            if (charts.length > 1) {
+                charts[1].innerHTML = '<p style="color:var(--text-tertiary);padding:40px 20px;text-align:center;font-size:14px;">暂无涨粉量趋势数据</p>';
+            }
+        }
+    } catch (err) {
+        document.getElementById('loading').textContent = '加载失败，请刷新重试';
+    }
+}
+
+function deleteCurrentVideo() {
+    showDeleteModal(
+        '确定删除 "<strong>' + VIDEO_TOPIC + '</strong>" 的所有数据？此操作不可恢复。',
+        function() {
+            fetch('/api/video/' + VIDEO_ID + '/delete', { method: 'POST' })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        window.location.href = '/';
+                    } else {
+                        alert('删除失败: ' + (data.error || ''));
+                    }
+                })
+                .catch(function(err) {
+                    alert('网络错误，请重试');
+                });
+        }
+    );
+}
+
+loadDetail();
+</script>
+{% endblock %}
